@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>Outreach sent log</title>
+<meta name="robots" content="noindex"><title>Outreach dashboard</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#6b7685;--line:#e3e7ec;--acc:#2456d8}
 *{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
@@ -19,13 +19,13 @@ h3{margin:18px 0 6px}.meta{color:var(--mute);font-size:13px}code{background:#eef
 <div id="setup" class="card hidden"><h2 style="margin-top:0">Connect</h2>
  <p>One-time setup. The token stays in this browser and is only sent to GitHub.</p>
  <ol><li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → New fine-grained token</a>.</li>
- <li>Name <code>outreach-log</code>. Repository access: only <code>outreach-emailer</code>. Permission: <b>Contents: Read-only</b>.</li><li>Paste it here.</li></ol>
+ <li>Name <code>outreach-log</code>. Repository access: only <code>outreach-emailer</code>. Permission: <b>Contents: Read and write</b> (write is only used to approve batches).</li><li>Paste it here.</li></ol>
  <input id="tok" type="password" placeholder="github_pat_..." autocomplete="off"><button class="p" id="save">Save and open</button>
  <div id="err" class="meta" style="color:#b42318"></div></div>
-<div id="app" class="hidden"><header><h1>Outreach: emails sent</h1><input id="q" placeholder="Search name, org, email…"><button id="refresh">Refresh</button><button id="logout">Sign out</button></header>
-<main><div class="stats" id="stats"></div><div id="list"></div></main></div>
+<div id="app" class="hidden"><header><h1>Outreach</h1><input id="q" placeholder="Search name, org, email…"><button id="refresh">Refresh</button><button id="logout">Sign out</button></header>
+<main><div class="stats" id="stats"></div><div id="pending"></div><div id="list"></div></main></div>
 <script>
-const URL_="https://api.github.com/repos/j4dhav/outreach-emailer/contents/claude-outreach/sent.json?ref=main";
+const BASE="https://api.github.com/repos/j4dhav/outreach-emailer/contents/claude-outreach/";const URL_=BASE+"sent.json?ref=main";let Q=[],QSHA="";
 const $=s=>document.querySelector(s);let L=[];
 const tok=()=>{try{return localStorage.getItem("oe_tok")||""}catch(e){return window._t||""}};
 const setTok=v=>{try{localStorage.setItem("oe_tok",v)}catch(e){window._t=v}};
@@ -34,11 +34,33 @@ const day=t=>new Date(t).toLocaleDateString("en-CA",{timeZone:TZ});
 const time=t=>new Date(t).toLocaleTimeString("en-US",{timeZone:TZ,hour:"numeric",minute:"2-digit"});
 function el(tag,a={},...k){const e=document.createElement(tag);for(const[x,v]of Object.entries(a))e.setAttribute(x,v);for(const c of k.flat())e.append(c&&c.nodeType?c:document.createTextNode(c==null?"":c));return e}
 async function load(){const r=await fetch(URL_+"&t="+Date.now(),{headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github.raw+json"}});
- if(r.status===401||r.status===403)throw new Error("Token rejected. It needs Contents: Read-only on outreach-emailer.");if(!r.ok)throw new Error("GitHub error "+r.status);L=await r.json()}
+ if(r.status===401||r.status===403)throw new Error("Token rejected. It needs Contents: Read-only on outreach-emailer.");if(!r.ok)throw new Error("GitHub error "+r.status);L=await r.json();
+ const q=await fetch(BASE+"queue.json?ref=main&t="+Date.now(),{headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github+json"}});
+ if(q.ok){const j=await q.json();QSHA=j.sha;Q=JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g,"")))))}}
+async function approve(batch){const n=Q.filter(x=>x.batch===batch&&x.status==="queued"&&!x.approved).length;
+ if(!confirm("Approve "+n+" emails in batch "+batch+"? They send in the next 8-11am weekday window."))return;
+ Q.forEach(x=>{if(x.batch===batch&&x.status==="queued")x.approved=true});
+ const body=JSON.stringify(Q,null,1)+"\n";
+ const r=await fetch(BASE+"queue.json",{method:"PUT",headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github+json"},
+  body:JSON.stringify({message:"approve batch "+batch,sha:QSHA,branch:"main",content:btoa(unescape(encodeURIComponent(body)))})});
+ if(!r.ok){alert("Approve failed ("+r.status+"). The token needs Contents: Read and write, or the queue changed: refresh and retry.");return}
+ alert("Approved.");refresh()}
+async function reject(id){Q.forEach(x=>{if(x.id===id)x.status="rejected"});const body=JSON.stringify(Q,null,1)+"\n";
+ const r=await fetch(BASE+"queue.json",{method:"PUT",headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github+json"},
+  body:JSON.stringify({message:"reject "+id,sha:QSHA,branch:"main",content:btoa(unescape(encodeURIComponent(body)))})});
+ if(!r.ok)alert("Failed ("+r.status+"), refresh and retry.");refresh()}
 function paint(){const f=$("#q").value.toLowerCase();
  const rows=[...L].filter(x=>!f||JSON.stringify(x).toLowerCase().includes(f)).sort((a,b)=>new Date(b.sent_at)-new Date(a.sent_at));
  const today=day(new Date()),days=new Set(L.map(x=>day(x.sent_at)));
- const st=[["Total sent",L.length],["Sent today",L.filter(x=>day(x.sent_at)===today).length],["Days active",days.size],["Organizations",new Set(L.map(x=>x.org)).size]];
+ const pend=Q.filter(x=>x.status==="queued"&&!x.approved),appr=Q.filter(x=>x.status==="queued"&&x.approved);
+ const pb={};pend.forEach(x=>(pb[x.batch]??=[]).push(x));const pe=[];
+ for(const b of Object.keys(pb)){pe.push(el("h3",{},"Needs approval: batch "+b+" ("+pb[b].length+")"));
+  const btn=el("button",{class:"p"},"Approve this batch");btn.onclick=()=>approve(b);pe.push(btn);
+  pb[b].forEach(x=>{const rj=el("button",{},"Remove");rj.onclick=()=>{if(confirm("Remove the email to "+x.to+"?"))reject(x.id)};
+   pe.push(el("div",{class:"card"},el("div",{},el("b",{},(x.name||"")+" · "+(x.org||""))," ",el("span",{class:"meta"},x.kind+" · "+x.to)),
+    el("div",{},el("b",{},"Subject: "),x.subject),el("pre",{style:"white-space:pre-wrap;font:inherit;background:#fafbfc;padding:8px;border-radius:6px"},x.body),rj))})}
+ $("#pending").replaceChildren(...pe);
+ const st=[["Queued (approved)",appr.length],["Waiting approval",pend.length],["Total sent",L.length],["Sent today",L.filter(x=>day(x.sent_at)===today).length],["Organizations",new Set(L.map(x=>x.org)).size]];
  $("#stats").replaceChildren(...st.map(([k,v])=>el("div",{class:"card stat"},el("b",{},String(v)),el("span",{},k))));
  const by={};rows.forEach(x=>(by[day(x.sent_at)]??=[]).push(x));const out=[];
  for(const d of Object.keys(by)){out.push(el("h3",{},d+"  ·  "+by[d].length+" sent"),
