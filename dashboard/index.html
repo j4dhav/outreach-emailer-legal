@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Outreach dashboard</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#6b7685;--line:#e3e7ec;--acc:#2456d8;--ok:#1a7f4b;--warn:#b45309;--bad:#b42318}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
+h1{font-size:18px;margin:0 auto 0 0}main{max-width:1000px;margin:0 auto;padding:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat b{display:block;font-size:24px}.stat span{color:var(--mute);font-size:13px}
+button{font:inherit;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--acc)}button.p{background:var(--acc);color:#fff;border-color:var(--acc)}button.d{color:var(--bad)}button:disabled{opacity:.5;cursor:default}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}.tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.tab{padding:8px 14px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--mute)}.tab.on{color:var(--ink);border-color:var(--acc);font-weight:600}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--mute)}
+.pill.on{color:var(--ok);border-color:var(--ok)}.pill.off{color:var(--warn);border-color:var(--warn)}
+.draft{margin-bottom:10px}.draft h3{margin:0 0 2px;font-size:15px}.meta{color:var(--mute);font-size:13px}
+.body{white-space:pre-wrap;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:8px;display:none;font-size:14px}
+.row{display:flex;gap:10px;align-items:flex-start}.row input{margin-top:4px;transform:scale(1.2)}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+td,th{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}th{background:#fafbfc;color:var(--mute);font-weight:600}
+#msg{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1c2430;color:#fff;padding:10px 16px;border-radius:8px;display:none;max-width:90%;z-index:9}
+#setup{max-width:560px;margin:60px auto}#setup ol{padding-left:20px}#setup input{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font:inherit;margin:8px 0}
+code{background:#eef1f5;padding:1px 5px;border-radius:4px}.hidden{display:none!important}
+</style></head><body>
+<div id="setup" class="card hidden">
+ <h2 style="margin-top:0">Connect the dashboard</h2>
+ <p>One-time setup. The token stays in this browser only and is sent only to GitHub.</p>
+ <ol>
+  <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → New fine-grained token</a>.</li>
+  <li>Name it <code>outreach-dashboard</code>, expiration 1 year or longer. Repository access: <b>Only select repositories</b> → <code>outreach-emailer</code>.</li>
+  <li>Permissions → Repository: <b>Contents: Read-only</b> and <b>Actions: Read and write</b>. Generate token.</li>
+  <li>Paste it below.</li>
+ </ol>
+ <input id="tok" type="password" placeholder="github_pat_..." autocomplete="off">
+ <button class="p" id="save">Save and open dashboard</button>
+ <div id="seterr" class="meta" style="color:var(--bad)"></div>
+</div>
+
+<div id="app" class="hidden">
+<header><h1>Outreach dashboard</h1><span id="runstate" class="meta"></span>
+ <button id="refresh">Refresh</button><button id="logout" title="Forget the token on this device">Sign out</button></header>
+<main>
+ <div class="stats" id="stats"></div>
+ <div class="card bar" id="controls">
+  <button id="ap"></button><button id="pause"></button>
+  <button id="runnow" title="Research, draft, and send within the 9am-4pm weekday window">Run now</button>
+  <button id="sendnow" class="d" title="Send approved drafts right now, even outside the weekday window">Send approved now…</button>
+  <span class="meta" id="gen"></span>
+ </div>
+ <div class="tabs"><button class="tab on" data-t="review">Review</button><button class="tab" data-t="queue">Approved &amp; sent</button><button class="tab" data-t="activity">Replies &amp; activity</button><button class="tab" data-t="leads">Pipeline</button></div>
+ <section id="t-review"></section><section id="t-queue" class="hidden"></section><section id="t-activity" class="hidden"></section><section id="t-leads" class="hidden"></section>
+</main></div>
+<div id="msg"></div>
+<script>
+const REPO="j4dhav/outreach-emailer", API="https://api.github.com/repos/"+REPO;
+const $=s=>document.querySelector(s); let D=null, sel=new Set(), polling=null;
+const tok=()=>{try{return localStorage.getItem("oe_tok")||""}catch(e){return window._t||""}};
+const setTok=v=>{try{localStorage.setItem("oe_tok",v)}catch(e){window._t=v}};
+const H=(raw)=>({"Authorization":"Bearer "+tok(),"Accept":raw?"application/vnd.github.raw+json":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"});
+function toast(t,ms=4000){const m=$("#msg");m.textContent=t;m.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(()=>m.style.display="none",ms)}
+function el(tag,attrs={},...kids){const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==="class")e.className=v;else if(k.startsWith("on"))e.addEventListener(k.slice(2),v);else e.setAttribute(k,v)}for(const c of kids.flat())e.append(c&&c.nodeType?c:document.createTextNode(c==null?"":c));return e}
+const ago=t=>{if(!t)return"";const s=(Date.now()-new Date(t))/1000;return s<90?"just now":s<5400?Math.round(s/60)+" min ago":s<129600?Math.round(s/3600)+" h ago":Math.round(s/86400)+" d ago"};
+
+async function load(){
+  const r=await fetch(API+"/contents/dashboard.json?ref=state&t="+Date.now(),{headers:H(true)});
+  if(r.status===401||r.status===403){throw new Error("Token rejected by GitHub. Check it has Contents (read) and Actions (read/write) on outreach-emailer.")}
+  if(r.status===404){D=null;return}
+  if(!r.ok)throw new Error("GitHub error "+r.status);
+  D=await r.json();
+}
+async function dispatch(command,args=""){
+  const r=await fetch(API+"/actions/workflows/outreach.yml/dispatches",{method:"POST",headers:{...H(),"Content-Type":"application/json"},body:JSON.stringify({ref:"main",inputs:{command,args}})});
+  if(r.status!==204)throw new Error("Could not start the job ("+r.status+"). The token needs Actions: Read and write.");
+}
+async function runInfo(){
+  const r=await fetch(API+"/actions/runs?per_page=1",{headers:H()});if(!r.ok)return null;const j=await r.json();return j.workflow_runs[0]||null;
+}
+async function act(label,command,args){
+  try{await dispatch(command,args);toast(label+" — started. This takes about 1 minute; the page updates itself.",6000);watch()}catch(e){toast(e.message,8000)}
+}
+function watch(){clearInterval(polling);let n=0;polling=setInterval(async()=>{n++;const ri=await runInfo();paintRun(ri);
+  if(ri&&ri.status==="completed"||n>90){clearInterval(polling);await refresh(true)}},8000);setTimeout(async()=>paintRun(await runInfo()),2500)}
+function paintRun(ri){const s=$("#runstate");if(!ri){s.textContent="";return}
+  s.textContent=ri.status==="completed"?("Last job: "+ri.conclusion+" · "+ago(ri.updated_at)):("Job "+ri.status+"…")}
+
+function paint(){
+  if(!D){$("#stats").replaceChildren(el("div",{class:"card"},"No data yet. Click “Refresh data” after running a job; first load: "),el("button",{class:"p",onclick:()=>act("Export","export","")},"Create dashboard data"));return}
+  const cnt=(k,s)=>D.leads.filter(l=>(!k||l.kind===k)&&(!s||l.status===s)).reduce((a,l)=>a+l.c,0);
+  const pend=D.drafts.filter(d=>d.status==="pending").length, appr=D.drafts.filter(d=>d.status==="approved").length;
+  const replied=D.events.filter(e=>e.type==="replied").length;
+  const st=[["Sent today",D.sent_today+" / "+D.daily_cap],["To review",pend],["Approved, queued",appr],["Replies",replied],["Bounces (7d)",D.health.bounced_7d+" / "+D.health.sent_7d],["Usable leads",cnt()-cnt(0,"no_email")]];
+  $("#stats").replaceChildren(...st.map(([k,v])=>el("div",{class:"stat"},el("b",{},String(v)),el("span",{},k))));
+  $("#ap").replaceChildren("Autopilot: ",el("span",{class:"pill "+(D.settings.autopilot?"on":"off")},D.settings.autopilot?"ON":"OFF"));
+  $("#pause").replaceChildren("Sending: ",el("span",{class:"pill "+(D.settings.paused?"off":"on")},D.settings.paused?"PAUSED":"active"));
+  $("#gen").textContent="Data from "+ago(D.generated_at);
+  // review
+  const pd=D.drafts.filter(d=>d.status==="pending");
+  const rv=$("#t-review");rv.replaceChildren();
+  rv.append(el("div",{class:"bar"},
+    el("button",{class:"p",onclick:()=>{if(!sel.size)return toast("Tick some drafts first.");act("Approve "+sel.size,"apply","approve="+[...sel].join(","));sel.clear()}},"Approve selected"),
+    el("button",{class:"d",onclick:()=>{if(!sel.size)return toast("Tick some drafts first.");act("Reject "+sel.size,"apply","reject="+[...sel].join(","));sel.clear()}},"Reject selected"),
+    el("button",{onclick:()=>{pd.forEach(d=>sel.add(d.id));paint()}},"Select all"),
+    el("button",{onclick:()=>{if(confirm("Approve all "+pd.length+" pending drafts?"))act("Approve all","apply","approve_all=1")}},"Approve all ("+pd.length+")"),
+    el("span",{class:"meta"},sel.size+" selected")));
+  if(!pd.length)rv.append(el("div",{class:"card meta"},"Nothing waiting for review. New drafts appear after the next run."));
+  pd.forEach(d=>{const b=el("div",{class:"body"},d.body);
+    rv.append(el("div",{class:"card draft"},el("div",{class:"row"},
+      el("input",{type:"checkbox",...(sel.has(d.id)?{checked:""}:{}),onchange:e=>{e.target.checked?sel.add(d.id):sel.delete(d.id);paint()}}),
+      el("div",{style:"flex:1"},el("h3",{},(d.name||"(no name)")+" · "+(d.org||"")),
+        el("div",{class:"meta"},[d.lead_kind,d.locality,d.email,d.kind==="first"?"":d.kind].filter(Boolean).join(" · ")),
+        el("div",{},el("b",{},"Subject: "),d.subject),
+        el("button",{style:"margin-top:6px",onclick:()=>{b.style.display=b.style.display==="block"?"none":"block"}},"Show email"),b))))});
+  // queue
+  const q=$("#t-queue");q.replaceChildren();
+  const rows=D.drafts.filter(d=>d.status==="approved"||d.status==="sent");
+  q.append(el("table",{},el("tr",{},...["Status","To","Organization","Subject","When"].map(h=>el("th",{},h))),
+    ...rows.map(d=>el("tr",{},el("td",{},d.status),el("td",{},(d.name||"")+" <"+d.email+">"),el("td",{},d.org||""),el("td",{},d.subject),el("td",{},ago(d.sent_at||d.created_at)))),
+    ...(rows.length?[]:[el("tr",{},el("td",{colspan:5,class:"meta"},"Nothing approved or sent yet."))])));
+  // activity
+  const a=$("#t-activity");a.replaceChildren();
+  const ev=D.events.filter(e=>["replied","bounced","send_error"].includes(e.type));
+  a.append(el("h3",{},"Replies, bounces, errors"),el("table",{},el("tr",{},...["Type","Who","Detail","When"].map(h=>el("th",{},h))),
+    ...ev.map(e=>el("tr",{},el("td",{},e.type),el("td",{},(e.name||"")+" "+(e.org?("@ "+e.org):"")),el("td",{},(e.detail||"").slice(0,200)),el("td",{},ago(e.ts)))),
+    ...(ev.length?[]:[el("tr",{},el("td",{colspan:4,class:"meta"},"None yet."))])));
+  const src=D.events.filter(e=>e.type.startsWith("faculty")||e.type.startsWith("yc"));
+  a.append(el("h3",{},"Lead sources"),el("table",{},...src.slice(0,15).map(e=>el("tr",{},el("td",{},e.detail.slice(0,150)),el("td",{},ago(e.ts))))));
+  // leads
+  const l=$("#t-leads");l.replaceChildren();
+  const statuses=[...new Set(D.leads.map(x=>x.status))],kinds=[...new Set(D.leads.map(x=>x.kind))];
+  l.append(el("table",{},el("tr",{},el("th",{},"Type"),...statuses.map(s=>el("th",{},s))),
+    ...kinds.map(k=>el("tr",{},el("td",{},k),...statuses.map(s=>el("td",{},String(cnt(k,s))))))));
+}
+async function refresh(quiet){try{await load();paint();if(!quiet)toast("Refreshed")}catch(e){toast(e.message,8000)}}
+function show(){const has=!!tok();$("#setup").classList.toggle("hidden",has);$("#app").classList.toggle("hidden",!has);if(has){refresh(true);runInfo().then(paintRun)}}
+$("#save").onclick=async()=>{const v=$("#tok").value.trim();if(!v)return;setTok(v);try{await load();show()}catch(e){setTok("");$("#seterr").textContent=e.message}};
+$("#logout").onclick=()=>{setTok("");location.reload()};
+$("#refresh").onclick=()=>refresh();
+$("#ap").onclick=()=>act("Autopilot","apply","autopilot="+(D&&D.settings.autopilot?"off":"on"));
+$("#pause").onclick=()=>act("Pause/resume","apply","paused="+(D&&D.settings.paused?"0":"1"));
+$("#runnow").onclick=()=>act("Run","run","");
+$("#sendnow").onclick=()=>{if(confirm("This sends REAL emails for approved drafts right now, even outside the 9am–4pm weekday window. Continue?"))act("Send now","send","--ignore-window")};
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===b));["review","queue","activity","leads"].forEach(t=>$("#t-"+t).classList.toggle("hidden",t!==b.dataset.t))});
+show();
+</script></body></html>
