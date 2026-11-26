@@ -31,7 +31,7 @@ code{background:#eef1f5;padding:1px 5px;border-radius:4px}.hidden{display:none!i
 <main><section id="t-emails"><div class="stats" id="stats"></div><div id="pending"></div><div id="list"></div></section>
 <section id="t-fu" class="hidden"><div class="stats" id="fustats"></div>
  <div class="card meta">Seven days after a first email with no reply, one short follow-up is sent in the same Gmail thread at the next 8–11am weekday send. It's skipped automatically if they've replied.</div>
- <div class="bar2"><input id="fuq" placeholder="Search name, org, email…"><select id="fuf"><option value="">All</option><option value="due">Due soon</option><option value="queued">Follow-up queued</option><option value="fsent">Follow-up sent</option><option value="replied">Replied</option><option value="bounced">Bounced</option></select><button class="p" id="fucsv">Download CSV</button><span class="meta" id="fucount"></span></div>
+ <div class="bar2"><input id="fuq" placeholder="Search name, org, email…"><select id="fuf"><option value="">All</option><option value="due">Due soon</option><option value="queued">Follow-up queued</option><option value="fsent">Follow-up sent</option><option value="yes">Interested</option><option value="question">Asked a question</option><option value="no">Declined</option><option value="ooo">Away (auto-reply)</option><option value="replied">Replied (other)</option><option value="bounced">Bounced</option></select><button class="p" id="fucsv">Download CSV</button><span class="meta" id="fucount"></span></div>
  <div id="futable"></div></section>
 <section id="t-yc" class="hidden"><div id="ycprog"></div><div class="stats" id="ycstats"></div>
  <div class="bar2"><input id="ycq" placeholder="Search company, founder, email, tag…"><select id="ycf"><option value="">All</option><option value="published">Published email</option><option value="guess">Guessed email</option><option value="none">No email</option><option value="fit">Hardware / bio / aero fit</option></select><button class="p" id="yccsv">Download CSV</button><span class="meta" id="yccount"></span></div>
@@ -86,12 +86,17 @@ let YC=[],PF=[],PROG={},loadedLeads=false,REPLIES=[];
 async function loadReplies(){try{REPLIES=JSON.parse(await raw("replies.json")||"[]")}catch(e){REPLIES=[]}}
 function addWeekdays(d,n){d=new Date(d);d.setDate(d.getDate()+n);while([0,6].includes(d.getDay()))d.setDate(d.getDate()+1);return d}
 function fuRowsAll(){const firsts=L.filter(x=>(x.type||"first")==="first");const fsent={};L.filter(x=>x.type==="followup").forEach(x=>fsent[x.to.toLowerCase()]=x);
- const qf={};Q.filter(x=>x.type==="followup").forEach(x=>qf[x.to.toLowerCase()]=x);const rep=new Set(REPLIES.map(r=>(r.to||r.email||"").toLowerCase()));
+ const qf={};Q.filter(x=>x.type==="followup").forEach(x=>qf[x.to.toLowerCase()]=x);const repm={};REPLIES.forEach(r=>repm[(r.to||r.email||"").toLowerCase()]=r);
  return firsts.map(x=>{const k=x.to.toLowerCase(),due=addWeekdays(x.sent_at,7);let st,when;
-  if(x.bounced){st="bounced";when=""}else if(rep.has(k)||(qf[k]&&qf[k].status==="skipped_has_reply")){st="replied";when=""}
-  else if(fsent[k]){st="fsent";when=fsent[k].sent_at}else if(qf[k]&&qf[k].status==="queued"){st="queued";when=due}else{st="due";when=due}
-  return {...x,st,when,due}}).sort((a,b)=>a.due-b.due)}
-const FULABEL={due:"Waiting (no reply yet)",queued:"Follow-up queued",fsent:"Follow-up sent",replied:"Replied",bounced:"Bounced"};
+  const r=repm[k],cat=r&&(r.category||"yes");let due2=due;
+  if(r&&cat==="ooo"&&r.return_date){const rd=addWeekdays(r.return_date+"T18:00:00Z",1);if(rd>due2)due2=rd}
+  if(x.bounced){st="bounced";when=""}else if(r&&cat==="yes"){st="yes";when=""}else if(r&&cat==="question"){st="question";when=""}
+  else if(r&&cat==="no"){st="no";when=""}else if(r&&cat==="other"){st="replied";when=""}
+  else if(qf[k]&&qf[k].status==="skipped_has_reply"){st="replied";when=""}
+  else if(fsent[k]){st="fsent";when=fsent[k].sent_at}else if(qf[k]&&qf[k].status==="queued"){st="queued";when=due2}
+  else if(r&&cat==="ooo"){st="ooo";when=due2}else{st="due";when=due2}
+  return {...x,st,when,due:due2,away:r&&cat==="ooo"?r.return_date:"",summary:r?r.summary:""}}).sort((a,b)=>a.due-b.due)}
+const FULABEL={due:"Waiting (no reply yet)",ooo:"Away (auto-reply)",queued:"Follow-up queued",fsent:"Follow-up sent",yes:"⭐ Interested",question:"⭐ Asked a question",no:"Declined (thanked)",replied:"Replied",bounced:"Bounced"};
 function fuRows(){const f=$("#fuf").value,q=$("#fuq").value.toLowerCase();return fuRowsAll().filter(x=>(!f||x.st===f)&&(!q||JSON.stringify([x.name,x.org,x.to,x.subject]).toLowerCase().includes(q)))}
 function paintFU(){const all=fuRowsAll(),now=new Date(),wk=new Date(now.getTime()+7*864e5);
  const c=k=>all.filter(x=>x.st===k).length;
@@ -100,7 +105,7 @@ function paintFU(){const all=fuRowsAll(),now=new Date(),wk=new Date(now.getTime(
  const d=t=>t?new Date(t).toLocaleDateString("en-US",{timeZone:TZ,month:"short",day:"numeric"}):"";
  $("#futable").replaceChildren(el("table",{},el("tr",{},...["To","Organization","First email","Follow-up","Status"].map(h=>el("th",{},h))),
   ...rows.map(x=>el("tr",{},el("td",{},(x.name||"")+" <"+x.to+">"),el("td",{},x.org||""),el("td",{},d(x.sent_at)+" · "+(x.subject||"")),
-   el("td",{},x.st==="fsent"?"sent "+d(x.when):x.st==="due"||x.st==="queued"?"due "+d(x.due):"—"),el("td",{},el("span",{class:"tag"},FULABEL[x.st]))))))}
+   el("td",{},x.st==="fsent"?"sent "+d(x.when):["due","queued","ooo"].includes(x.st)?"due "+d(x.due)+(x.away?" (back "+d(x.away+"T18:00:00Z")+")":""):"—"),el("td",{},el("span",{class:"tag"},FULABEL[x.st]),x.summary?el("div",{class:"meta"},x.summary):"")))))}
 
 const HARD=/hardware|robot|aero|space|drone|bio|medic|health|device|sensor|energy|battery|manufactur|semiconductor|chip|climate|defense|vehicle|industrial/i;
 async function raw(path){const r=await fetch(BASE+path+"?ref=main&t="+Date.now(),{headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github.raw+json"}});if(!r.ok)return null;return r.text()}
@@ -138,7 +143,7 @@ function csv(rows,cols,name){const esc=v=>{v=v==null?"":Array.isArray(v)?v.map(f
 $("#yccsv").onclick=()=>csv(ycRows().map(x=>({...x,src:ycKind(x),tags:(x.tags||[]).join("; "),yc_url:"https://www.ycombinator.com/companies/"+x.slug})),[["company","company"],["website","website"],["batch","batch"],["team_size","team_size"],["founders","founders"],["email","email"],["email_source","src"],["to_name","to_name"],["one_liner","one_liner"],["industry","industry"],["tags","tags"],["locations","locations"],["is_hiring","is_hiring"],["yc_url","yc_url"]],"yc_startups.csv");
 $("#pfcsv").onclick=()=>csv(pfRows(),[["name","name"],["title","title"],["university","org"],["department","dept"],["email","email"],["city","city"],["local_or_virtual","locality"],["profile_url","url"],["research_text","profile_text"]],"professors.csv");
 ["ycq","ycf"].forEach(i=>$("#"+i).addEventListener("input",paintYC));$("#pfq").addEventListener("input",paintPF);["fuq","fuf"].forEach(i=>$("#"+i).addEventListener("input",paintFU));
-$("#fucsv").onclick=()=>csv(fuRows().map(x=>({...x,status:FULABEL[x.st],first_sent:x.sent_at,followup_due:x.due.toISOString().slice(0,10)})),[["name","name"],["email","to"],["organization","org"],["type","kind"],["subject","subject"],["first_sent","first_sent"],["followup_due","followup_due"],["status","status"]],"followups.csv");
+$("#fucsv").onclick=()=>csv(fuRows().map(x=>({...x,status:FULABEL[x.st],first_sent:x.sent_at,followup_due:x.due.toISOString().slice(0,10)})),[["name","name"],["email","to"],["organization","org"],["type","kind"],["subject","subject"],["first_sent","first_sent"],["followup_due","followup_due"],["status","status"],["reply_summary","summary"]],"followups.csv");
 document.querySelectorAll(".tab").forEach(b=>b.onclick=async()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===b));
  ["emails","fu","yc","prof"].forEach(t=>$("#t-"+t).classList.toggle("hidden",t!==b.dataset.t));
  if(b.dataset.t==="fu"){await loadReplies();paintFU();return}
