@@ -100,7 +100,7 @@ const FULABEL={due:"Waiting (no reply yet)",ooo:"Away (auto-reply)",queued:"Foll
 function fuRows(){const f=$("#fuf").value,q=$("#fuq").value.toLowerCase();return fuRowsAll().filter(x=>(!f||x.st===f)&&(!q||JSON.stringify([x.name,x.org,x.to,x.subject]).toLowerCase().includes(q)))}
 function paintFU(){const all=fuRowsAll(),now=new Date(),wk=new Date(now.getTime()+7*864e5);
  const c=k=>all.filter(x=>x.st===k).length;
- $("#fustats").replaceChildren(...[["First emails sent",all.length],["Follow-ups due in next 7 days",all.filter(x=>x.st==="due"&&x.due<=wk).length],["Follow-ups queued",c("queued")],["Follow-ups sent",c("fsent")],["Replied",c("replied")],["Bounced",c("bounced")]].map(([k,v])=>el("div",{class:"card stat"},el("b",{},String(v)),el("span",{},k))));
+ $("#fustats").replaceChildren(...[["First emails sent",all.length],["Follow-ups due in next 7 days",all.filter(x=>x.st==="due"&&x.due<=wk).length],["Follow-ups queued",c("queued")],["Follow-ups sent",c("fsent")],["⭐ Interested",c("yes")+c("question")],["Declined",c("no")],["Away",c("ooo")],["Other replies",c("replied")],["Bounced",c("bounced")]].map(([k,v])=>el("div",{class:"card stat"},el("b",{},String(v)),el("span",{},k))));
  const rows=fuRows();$("#fucount").textContent=rows.length+" shown";
  const d=t=>t?new Date(t).toLocaleDateString("en-US",{timeZone:TZ,month:"short",day:"numeric"}):"";
  $("#futable").replaceChildren(el("table",{},el("tr",{},...["To","Organization","First email","Follow-up","Status"].map(h=>el("th",{},h))),
