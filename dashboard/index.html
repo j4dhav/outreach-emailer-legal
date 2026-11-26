@@ -1,10 +1,14 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>Outreach dashboard</title>
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#2456d8">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><link rel="icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Outreach"><meta name="apple-mobile-web-app-status-bar-style" content="default"><title>Outreach dashboard</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#6b7685;--line:#e3e7ec;--acc:#2456d8}
 *{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
-header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;gap:12px;align-items:center}
+header{padding-top:max(14px,env(safe-area-inset-top))!important;background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;gap:12px;align-items:center}
 h1{font-size:18px;margin:0 auto 0 0}main{max-width:1000px;margin:0 auto;padding:18px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
 button,input{font:inherit;border:1px solid var(--line);background:var(--card);border-radius:8px;padding:7px 12px}button{cursor:pointer}
@@ -29,7 +33,7 @@ code{background:#eef1f5;padding:1px 5px;border-radius:4px}.hidden{display:none!i
  <li>Name <code>outreach-log</code>. Repository access: only <code>outreach-emailer</code>. Permission: <b>Contents: Read and write</b> (write is only used to approve batches).</li><li>Paste it here.</li></ol>
  <input id="tok" type="password" placeholder="github_pat_..." autocomplete="off"><button class="p" id="save">Save and open</button>
  <div id="err" class="meta" style="color:#b42318"></div></div>
-<div id="app" class="hidden"><header><h1>Outreach</h1><input id="q" placeholder="Search name, org, email…"><button id="refresh">Refresh</button><button id="logout">Sign out</button></header>
+<div id="app" class="hidden"><header><h1>Outreach</h1><input id="q" placeholder="Search name, org, email…"><button id="notif">🔔 Notifications</button><button id="refresh">Refresh</button><button id="logout">Sign out</button></header>
 <nav class="tabs"><button class="tab on" data-t="emails">Emails</button><button class="tab" data-t="fu">Follow-ups</button><button class="tab" data-t="pipe">Pipeline</button><button class="tab" data-t="stats">Reply rates</button><button class="tab" data-t="yc">YC scrape</button><button class="tab" data-t="prof">Professors</button></nav>
 <main><section id="t-emails"><div class="stats" id="stats"></div><div id="pending"></div><div id="list"></div></section>
 <section id="t-fu" class="hidden"><div class="stats" id="fustats"></div>
@@ -182,4 +186,30 @@ setInterval(async()=>{if(tok()&&!$("#t-yc").classList.contains("hidden")){const 
 function show(){const h=!!tok();$("#setup").classList.toggle("hidden",h);$("#app").classList.toggle("hidden",!h);if(h)refresh()}
 $("#save").onclick=async()=>{const v=$("#tok").value.trim();if(!v)return;setTok(v);try{await load();show()}catch(e){setTok("");$("#err").textContent=e.message}};
 $("#logout").onclick=()=>{setTok("");location.reload()};$("#refresh").onclick=refresh;$("#q").oninput=paint;show();
+
+/* ---- installable app + push notifications ---- */
+const VAPID_PUBLIC="BGTmE_L3VMJWpnpZ7DjTgipdFtn2nayQm6Xgqszrr0PHjMbqTYWGlWnykOSjZvbB9T7axv_zPfmHBzSmsh3zNyg";
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{})}
+function b64ToBytes(b){const p="=".repeat((4-b.length%4)%4);const r=atob((b+p).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from([...r].map(c=>c.charCodeAt(0)))}
+const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent),standalone=window.matchMedia("(display-mode: standalone)").matches||navigator.standalone;
+async function paintNotif(){const b=$("#notif");if(!b)return;
+ if(!("Notification" in window)||!("serviceWorker" in navigator)){b.textContent=isIOS&&!standalone?"📲 Add to Home Screen for alerts":"🔕 Alerts not supported";return}
+ b.textContent=Notification.permission==="granted"?"🔔 Alerts on":"🔔 Turn on alerts"}
+async function saveSub(sub){const url=BASE+"push_subscriptions.json";
+ for(let i=0;i<3;i++){const g=await fetch(url+"?ref=main&t="+Date.now(),{headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github+json"}});
+  let list=[],sha;if(g.ok){const j=await g.json();sha=j.sha;try{list=JSON.parse(atob(j.content.replace(/\n/g,"")))}catch(e){}}
+  const js=sub.toJSON();list=list.filter(x=>x.endpoint!==js.endpoint);list.push({...js,device:navigator.userAgent.slice(0,80),added:new Date().toISOString()});
+  const r=await fetch(url,{method:"PUT",headers:{Authorization:"Bearer "+tok(),Accept:"application/vnd.github+json"},
+   body:JSON.stringify({message:"add push subscription",branch:"main",...(sha?{sha}:{}),content:btoa(JSON.stringify(list,null,1))})});
+  if(r.ok)return true}return false}
+$("#notif").onclick=async()=>{
+ if(isIOS&&!standalone){alert("On iPhone: tap the Share button, then 'Add to Home Screen'. Open Outreach from your home screen, then tap 'Turn on alerts'.");return}
+ if(!("Notification" in window)){alert("This browser doesn't support notifications.");return}
+ const perm=await Notification.requestPermission();if(perm!=="granted"){paintNotif();return}
+ try{const reg=await navigator.serviceWorker.ready;
+  const sub=(await reg.pushManager.getSubscription())||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToBytes(VAPID_PUBLIC)});
+  if(await saveSub(sub)){reg.showNotification("Outreach alerts are on",{body:"You'll get notified about interested replies and each morning's send.",icon:"icons/icon-192.png"});alert("Alerts are on for this device.")}
+  else alert("Couldn't save this device. Check that your GitHub token has Contents: Read and write.")}
+ catch(e){alert("Couldn't turn on alerts: "+e.message)}paintNotif()};
+paintNotif();
 </script></body></html>
